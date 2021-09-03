@@ -6,8 +6,8 @@ use arrow2::record_batch::RecordBatch;
 
 use std::env;
 use std::fs::File;
-
-use clp::CLParser;
+extern crate clap;
+use clap::{App, Arg, SubCommand};
 
 struct CSV {
     filename: String,
@@ -55,7 +55,7 @@ impl Iterator for CSV {
         let rows = &self.rows[..rows_read];
 
         if rows_read == 0 {
-            return None
+            return None;
         }
         // parse the batches into a `RecordBatch`. This is CPU-intensive, has no IO,
         // and can be performed on a different thread by passing `rows` through a channel.
@@ -70,43 +70,50 @@ impl Iterator for CSV {
     }
 }
 
-// Usage:
-//    % datautils -from A.csv -from_type csv -from_header Y -from_delimiter '|' -to A.parquet
+fn setup_clp() -> App<'static, 'static> {
+    let app = App::new("fconv: file converter")
+        .version("1.0")
+        .author("Adarsh Pannu")
+        .about("Converts files from one format to another")
+        .subcommand(
+            SubCommand::with_name("from")
+                .about("specify input file details")
+                .arg(
+                    Arg::with_name("name")
+                        .long("name")
+                        .short("n")
+                        .help("specify filename")
+                        .takes_value(true)
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("type")
+                        .long("type")
+                        .short("t")
+                        .help("specify file type (csv | [parquet)")
+                        .takes_value(true),
+                ),
+        );
+    app
+}
+
 fn main() -> Result<()> {
     //let args: Vec<String> = env::args().collect();
-    let arg_str = "datautils 
-        -from /Users/adarshrp/Projects/flare/data/emp.csv \
-        -from_type csv 
-        -from_has_header Y 
-        -from_delimiter , 
-        -to A.parquet 
-        -to_type parquet";
-    let args = arg_str
+    let arg_str = "fconv 
+        from --name /Users/adarshrp/Projects/flare/data/emp.csv \
+        to --name /tmp/emp.csv";
+
+    let arg_vec: Vec<String> = arg_str
         .split(' ')
         .map(|e| e.to_owned())
         .filter(|e| e.len() > 0 && e != "\n")
         .collect();
 
-    println!("{:?}", &args);
+    let matches = setup_clp().get_matches_from(arg_vec);
 
-    // Parse command-line arguments
-    let mut clpr = CLParser::new(&args);
+    println!("{:?}", matches);
 
-    clpr.define("--from param")
-        .define("--from_type param")
-        .define("--from_has_header param")
-        .define("--from_delimiter param")
-        .define("--to param")
-        .define("--to_type param")
-        .define("--to_header param")
-        .define("--to_delimiter param");
-
-    let status = clpr.parse();
-    if status.is_err() {
-        println!("Usage: {}", arg_str);
-        panic!("Error parsing command line arguments: {:?}", status);
-    }
-
+    /*
     let from_iter: Box<dyn Iterator<Item = RecordBatch>> = match clpr.get("from_type") {
         Some("csv") => {
             let delimiter = clpr.get("from_delimiter").unwrap_or("|");
@@ -134,6 +141,7 @@ fn main() -> Result<()> {
         println!("{:?}", batch);
         //break;
     }
+    */
 
     Ok(())
 }
