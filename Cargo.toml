@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 arrow2 = "0.4.0"
+clp = {git = "https://github.com/adarshpannu/clp"}
