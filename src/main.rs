@@ -2,17 +2,23 @@
 use arrow2::datatypes;
 use arrow2::error::Result;
 use arrow2::io::csv::read::{self, ByteRecord};
+use arrow2::io::parquet::write::{
+    to_parquet_schema, write_file, Compression, Encoding, Version, WriteOptions,
+};
+use arrow2::io::parquet::write::{RowGroupIter, RowGroupIterator};
 use arrow2::record_batch::RecordBatch;
-
 use std::env;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 
 #[macro_use]
 extern crate clap;
-use clap::App;
+use clap::{App, ArgMatches};
 
-use arrow2::io::parquet::write::{write_file, to_parquet_schema, Compression, Encoding, Version, WriteOptions};
-use arrow2::io::parquet::write::{RowGroupIter, RowGroupIterator};
+enum Filetype {
+    UNSUPPORTED,
+    CSV,
+    PARQUET,
+}
 
 struct CSV {
     filename: String,
@@ -34,10 +40,10 @@ impl CSV {
 
         // Infers the schema using the default inferer. The inferer is just a function that maps a string
         // to a `DataType`.
-        let schema = read::infer_schema(&mut reader, None, true, &read::infer).unwrap();
+        let schema = read::infer_schema(&mut reader, None, has_header, &read::infer).unwrap();
 
         // allocate space to read from CSV to. The size of this vec denotes how many rows are read.
-        let mut rows = vec![read::ByteRecord::default(); 100];
+        let mut rows = vec![read::ByteRecord::default(); 1024];
 
         CSV {
             filename,
@@ -56,7 +62,6 @@ impl Iterator for CSV {
         // skip 0 (excluding the header) and read up to 100 rows.
         // this is IO-intensive and performs minimal CPU work. In particular,
         // no deserialization is performed.
-        self.rows.clear();
         let rows_read = read::read_rows(&mut self.reader, 0, &mut self.rows).unwrap();
         let rows = &self.rows[..rows_read];
 
@@ -76,33 +81,32 @@ impl Iterator for CSV {
     }
 }
 
-enum Filetype {
-    UNKNOWN,
-    CSV,
-    PARQUET,
-}
-
-fn get_filetype_from_name(filename: &str) -> Filetype {
-    let ix = filename.rfind(".");
-    if let Some(ix) = ix {
-        let file_ext = &filename[ix + 1..];
-        match file_ext.to_lowercase().as_str() {
-            "csv" | "CSV" => Filetype::CSV,
-            "parquet" => Filetype::PARQUET,
-            _ => Filetype::UNKNOWN,
+fn get_filetype(matches: &ArgMatches) -> Filetype {
+    let filename = matches.value_of("from").unwrap();
+    let filetype = matches.value_of("fromtype");
+    let filetype = filetype.unwrap_or_else(|| {
+        let ix = filename.rfind(".");
+        if let Some(ix) = ix {
+            &filename[ix + 1..]
+        } else {
+            "none"
         }
-    } else {
-        Filetype::UNKNOWN
+    });
+
+    match filetype.to_lowercase().as_str() {
+        "csv" => Filetype::CSV,
+        "parquet" => Filetype::PARQUET,
+        _ => Filetype::UNSUPPORTED,
     }
 }
 
 fn main() -> Result<()> {
     //let args: Vec<String> = env::args().collect();
     let arg_str = "fconv 
-        -f /Users/adarshrp/Projects/flare/data/emp.csv \
-        -t /tmp/emp.parquet 
-        -d , 
-        -h";
+        --from /Users/adarshrp/Projects/tpch-data/sf0.01/region.tbl 
+        --fromtype csv 
+        --to /tmp/emp.parquet 
+        --delimiter |";
 
     let arg_vec: Vec<String> = arg_str
         .split(' ')
@@ -110,13 +114,10 @@ fn main() -> Result<()> {
         .filter(|e| e.len() > 0 && e != "\n")
         .collect();
 
-    //dbg!(&arg_vec);
-
-    // The YAML file is found relative to the current file, similar to how modules are found
     let yaml = load_yaml!("clap.yml");
     let matches = App::from_yaml(yaml).get_matches_from(arg_vec);
 
-    let filetype = get_filetype_from_name(matches.value_of("from").unwrap());
+    let filetype = get_filetype(&matches);
 
     let iter = match filetype {
         Filetype::CSV => {
@@ -126,11 +127,7 @@ fn main() -> Result<()> {
             }
             let delimiter: u8 = delimiter.as_bytes()[0];
 
-            let has_header = matches.value_of("header");
-            let has_header = match has_header {
-                Some("Y") | Some("y") => true,
-                _ => false,
-            };
+            let has_header = matches.is_present("header");
 
             let filename = matches.value_of("from").unwrap().to_string();
             let csv = CSV::new(filename, has_header, delimiter);
@@ -141,27 +138,30 @@ fn main() -> Result<()> {
         }
     };
 
-    /*
-    for batch in from_iter {
-        println!("{:?}", batch);
-        //break;
-    }
-    */
     // Create a new empty file
     let output_filename = matches.value_of("to").unwrap();
 
-    let mut file = File::create(output_filename)?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .append(false)
+        .create(true)
+        .truncate(true)
+        .open(output_filename)?;
+
     let options = WriteOptions {
         write_statistics: true,
-        compression: Compression::Uncompressed,
+        compression: Compression::Snappy,
         version: Version::V2,
     };
-    let encodings = vec![Encoding::Plain];
     let schema = &iter.schema.clone();
     let parquet_schema = to_parquet_schema(&iter.schema)?;
 
     let iter: Box<dyn Iterator<Item = Result<RecordBatch>>> = iter;
 
+    let encodings = (0..schema.fields().len())
+        .map(|_| Encoding::Plain)
+        .collect();
     let row_groups = RowGroupIterator::try_new(iter, schema, options, encodings)?;
 
     // Write the file. Note that, at present, any error results in a corrupted file.

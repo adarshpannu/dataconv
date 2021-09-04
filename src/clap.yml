@@ -5,28 +5,32 @@ about: Converts files from one format to another
 args:
   - from:
       long: from
-      short: f
       help: specify input filename
       takes_value: true
       required: true
+  - fromtype:
+      long: fromtype
+      help: specify input filename
+      takes_value: true
+      required: false
   - to:
       long: to
-      short: t
       help: specify output filename
       takes_value: true
       required: true
   - header:
       long: header
-      short: h
       help: does csv file (if specified) have a header?
       takes_value: false
       required: false
-      default_value: 'Y'
-      possible_values: [ 'Y', 'N']
   - delimiter:
       long: delimiter
-      short: d
       help: delimiter for csv file (if specified)?
       takes_value: true
       required: false
       default_value: ','
+  - overwrite:
+      long: overwrite
+      help: overwrite output file if it exists
+      takes_value: false
+      required: false
